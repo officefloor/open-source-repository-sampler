@@ -29,9 +29,8 @@ def _sample_args(sp: argparse.ArgumentParser) -> None:
     g.add_argument("--target", type=int, default=d["target"],
                    help=f"usable repositories wanted per language (default {d['target']})")
     g.add_argument("--seed", type=int, default=d["seed"],
-                   help=f"the one value that fixes the draw (default {d['seed']})")
-    g.add_argument("--pool", type=int, default=d["pool"],
-                   help=f"candidates fetched per stratum before the shuffle (default {d['pool']})")
+                   help=f"the one value that fixes the draw; fix it before the first draw and "
+                        f"keep the first sample (default {d['seed']})")
     g.add_argument("--exclude-owners", type=_list, default=d["exclude_owners"],
                    help="comma list of GitHub owners never sampled, e.g. your own (a "
                         "conflict-of-interest guard; default none)")

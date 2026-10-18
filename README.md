@@ -26,11 +26,13 @@ recognised on sight:
 
 | File | What it is |
 |---|---|
-| `open-source-repository-sample.csv` | One row per candidate drawn: where it is (`url`), the exact code (`commit`), its detected `language`, the criteria measures, `status` (`usable` / `excluded`) with the `reason`, and the `sampler_commit` that produced it |
+| `open-source-repository-sample.csv` | One row per candidate drawn: where it is (`url`), the exact code (`commit`), its detected `language`, the criteria measures, `status` (`usable` / `excluded` by the criteria / `error`, could not be inspected) with the `reason`, and the `sampler_commit` that produced it |
 | `open-source-repository-sample.derivation.json` | Opens with `about`: what the files are, and links to this repository, its documentation and source at the exact commit used, and the PyPI release, so a reader who finds the files in a paper's ancillary data can trace them here. Then how the sample was derived: the command as typed and fully resolved, every parameter, the sampler's version and commit, tool versions, the method in words, every GitHub query with its match count, the frozen candidate frame, and the CSV's sha256 |
 
 Excluded candidates stay in the CSV, so it shows that nothing was hand-picked. Experiments use the
-`usable` rows.
+`usable` rows. A candidate whose clone failed is `error`, not `excluded`: loss to infrastructure
+is kept apart from exclusion by the criteria, because it can fall unevenly (a clone timeout
+falls hardest on the largest projects), and the derivation reports its rate.
 
 `--label java-v2` gives `open-source-repository-sample.java-v2.csv` (and its derivation), so
 several samples can sit side by side.
@@ -64,12 +66,29 @@ open-source-repository-sampler sample \
 ```
 
 - **Strata.** A stratum is a language × popularity tier: `high` (>5000 stars), `mid`
-  (1000–5000), `low` (200–999). Each tier is split into star bands, because GitHub search returns
-  at most 1000 results. Candidates are shuffled with the seed, and bands are interleaved in
-  proportion to their size, so the draw spreads across the tier rather than taking its
-  most-starred repositories.
-- **Growth.** Each language keeps drawing until it has `--target` usable repositories, or its
-  strata run out. That outcome is reported in the derivation, not hidden.
+  (1000–5000), `low` (200–999). Stars measure attention, not quality; the tiers are there so a
+  sample spans the range of attention rather than only its top.
+- **The frame is the whole stratum.** GitHub search returns at most 1000 results per query, so
+  each tier is split into star bands (then creation-date bands) until every band matches at
+  most 1000 repositories, and every band is fetched whole. The frame is the complete population
+  of the stratum as GitHub search lists it, every repository has the same chance of being
+  drawn, and the seeded shuffle is a simple random sample within the stratum. The derivation
+  lists every band, its query and match count, and every repository enumerated. A search that
+  fails stops the run rather than leaving a gap; a band that cannot be split below the cap is
+  reported as truncated. Enumerating costs about one request per 100 repositories; a popular
+  language's low tier takes minutes.
+- **Growth.** Each language draws one candidate per tier per round until it has `--target`
+  usable repositories exactly, or its strata run out. That outcome is reported in the
+  derivation, not hidden.
+- **Allocation is disproportionate.** Tiers are drawn equally regardless of population, so the
+  pooled sample over-represents high-star repositories, and the usable split across tiers
+  follows each tier's exclusion rate. Comparisons between tiers need no weights. Estimates about
+  the population do: weight each stratum by population / usable, both in the derivation's
+  `summary.per_stratum`.
+- **Fix the seed first.** The seed is the one value that chooses the sample. Record it (in the
+  experiment's step script, or a pre-registration) before the first draw, and use the first
+  sample drawn. Re-drawing with new seeds until a sample looks right is selection by another
+  name, and the derivation cannot detect it.
 - **Pinned commit.** Each candidate is cloned at its default branch as it is when drawn. That
   commit is recorded, and every measure and criterion describes the code at that commit. The
   clone is deleted once its row is written.
@@ -82,11 +101,19 @@ open-source-repository-sampler sample \
   derivation records it under `sampling_clone`: the mode (`shallow` or `full-history`), the
   exact `git clone` flags, and the criteria that required it.
 - **Language detection.** The language is detected from the project's own source code (tests,
-  vendored, generated and build directories excluded). A repository counts toward its detected
-  language, so a C++ project labelled C on GitHub counts as C++.
+  vendored and generated files excluded; build-output directories excluded at the repository
+  root only, since deeper down `build` and `target` are ordinary package names). `.h` headers
+  are measured but do not vote between C and C++; the unambiguous files decide. A repository
+  counts toward its detected language, so a C++ project labelled C on GitHub counts as C++.
+  Both labels are in the CSV (`language`, `stratum_language`), as is whether GitHub lists the
+  repository as a `mirror` of one hosted elsewhere.
 - **Criteria.** The criteria are generic and fixed before any study looks at a repository:
   `--min-functions`, `--min-files-with-functions`, `--min-source-files`, `--min-nloc`,
-  `--min-commits`, `--min-contributors`, `--min-language-share`.
+  `--min-commits`, `--min-contributors`, `--min-language-share`. Function counts come from
+  lizard, which counts different constructs in different languages (and cannot exclude Rust's
+  inline test modules), so one `--min-functions` bound is a different threshold per language;
+  compare across languages with that in mind. Files lizard could not parse are counted in
+  `n_unparsed_files`.
 - **Resume.** An interrupted run resumes from its checkpoint (from the same frozen frame) when
   you re-run the same command.
 - **Safety.** A sample is never silently replaced; pass `--overwrite` to replace one. A sampler

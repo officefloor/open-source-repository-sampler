@@ -21,24 +21,26 @@ STEM = "open-source-repository-sample"
 # Column order of the CSV. Every row of every sample has all of these.
 COLUMNS = [
     "draw",                  # 1-based order in which the candidate was drawn
-    "status",                # usable | excluded
-    "reason",                # why excluded (empty when usable)
+    "status",                # usable | excluded (by the criteria) | error (could not inspect)
+    "reason",                # why excluded, or the error (empty when usable)
     "url",                   # clone URL
     "full_name",             # owner/name
     "commit",                # the pinned commit: the exact code checked against the criteria
     "commit_date",           # committer date of that commit (ISO 8601)
     "language",              # language detected from the project's own source
-    "language_share",        # that language's fraction of the source files
+    "language_share",        # that language's fraction of the non-header source files
     "github_language",       # GitHub's label at sampling time
+    "mirror",                # True when GitHub lists it as a mirror of a repository elsewhere
     "stratum_language",      # the stratum the candidate was drawn from
     "tier",
-    "star_band",
+    "star_band",             # the frame band (star range, maybe a creation-date range) it was in
     "stars",                 # at sampling time
-    "rank",                  # rank by stars within its star band's search results
+    "rank",                  # rank by stars within its band's search results
     "n_source_files",
     "n_functions",
     "n_files_with_functions",
     "nloc",
+    "n_unparsed_files",      # source files lizard could not parse (no functions counted)
     # The history columns are measured only when a history criterion (--min-commits,
     # --min-contributors) is set, which is when the full history is cloned; else empty.
     "n_commits",             # reachable from the pinned commit
@@ -48,7 +50,8 @@ COLUMNS = [
     "sampler_commit",        # the commit of the sampler that produced this row
 ]
 INT_COLUMNS = {"draw", "stars", "rank", "n_source_files", "n_functions",
-               "n_files_with_functions", "nloc", "n_commits", "n_contributors"}
+               "n_files_with_functions", "nloc", "n_unparsed_files", "n_commits",
+               "n_contributors"}
 FLOAT_COLUMNS = {"language_share"}
 
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

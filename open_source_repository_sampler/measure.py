@@ -4,11 +4,13 @@ Every measure here is generic: it describes the repository's size and history, n
 outcome any study tests. That keeps the sampler independent of the studies that use it: a
 repository cannot be selected or dropped on a result.
 
-  * language        the dominant language of the project's own source (tests, vendored,
-                    generated and build trees excluded), by file count aggregated into
-                    languages, with ambiguous `.h` headers resolved per repository;
-  * language_share  that language's fraction of those source files;
-  * n_source_files, n_functions (lizard), n_files_with_functions, nloc  of that source;
+  * language        the dominant language of the project's own source (tests, vendored and
+                    generated code excluded, build-output directories excluded at the root),
+                    by file count. `.h` headers are ambiguous between C and C++, so they are
+                    measured but do not vote;
+  * language_share  that language's fraction of the voting (non-header) source files;
+  * n_source_files, n_functions (lizard), n_files_with_functions, nloc  of that source, and
+    n_unparsed_files, the files lizard could not parse (they contribute no functions);
   * n_commits, n_contributors (distinct author emails), first_commit_date  of the history
     reachable from the pinned commit -- measured only when a criterion needs them.
 
@@ -90,11 +92,19 @@ _TEST_FILE = re.compile(
     r"|(?:^|/)(?:test_[^/]*|[^/]*_(?:test|spec))\.rb"
     r"|_(?:unit)?test\.(?:c|cc|cpp|cxx)"
     r"|(?:^|/)tests\.rs)$", re.I)
-# Directories that are not the project's own code: dependencies, build output, vendored or
-# generated trees.
-_SKIP_DIRS = {".git", "node_modules", "build", "target", "dist", ".venv", "venv",
-              "vendor", "vendored", "third_party", "thirdparty", "third-party",
-              "generated", "externals", "external", "deps", ".gradle", "out"}
+# Directories that hold other people's code, wherever they sit in the tree.
+_VENDOR_DIRS = {".git", "node_modules", "vendor", "vendored", "third_party", "thirdparty",
+                "third-party", "bower_components"}
+# Build output and environments. In a git clone these are normally absent (gitignored), while
+# the same names are ordinary package names deeper in a tree (`org/springframework/aop/target`,
+# `com/example/build`), so they are skipped at the repository root ONLY.
+_BUILD_DIRS = {"build", "target", "dist", "out", ".venv", "venv", ".gradle", "generated",
+               "externals", "external", "deps"}
+# Generated or minified files, by the common naming conventions (after Linguist's).
+_GENERATED_FILE = re.compile(
+    r"(?:[.-]min\.(?:js|css)|\.bundle\.js|\.pb\.(?:go|cc|h|rs|swift)|_pb2(?:_grpc)?\.py"
+    r"|\.pb(?:objc)?\.(?:m|h)|\.g\.(?:cs|dart)|\.designer\.cs|_generated\.go|\.gen\.go"
+    r"|\.generated\.[a-z]+|\.d\.ts|\.tab\.[ch]|\.yy\.[ch])$", re.I)
 # A source file larger than this is a generated/minified/vendored blob, not hand-maintained.
 MAX_FILE_BYTES = 1_000_000
 
@@ -148,16 +158,18 @@ def _git(args: list[str], cwd: str, timeout: float | None = None) -> subprocess.
 
 
 def source_files(root: str) -> list[str]:
-    """Repo-relative paths of the project's own maintained source files: tests, dependency,
-    build and generated trees, and oversized blobs excluded."""
+    """Repo-relative paths of the project's own maintained source files: tests, vendored and
+    generated code, root build directories and oversized blobs excluded."""
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        skip = _VENDOR_DIRS | (_BUILD_DIRS if dirpath == root else set())
+        dirnames[:] = sorted(d for d in dirnames if d not in skip)
         for fn in sorted(filenames):
             if os.path.splitext(fn)[1].lower() not in SOURCE_EXTS:
                 continue
             rel = os.path.relpath(os.path.join(dirpath, fn), root).replace(os.sep, "/")
-            if _TEST_DIR.search("/" + rel) or _TEST_FILE.search("/" + rel):
+            if (_TEST_DIR.search("/" + rel) or _TEST_FILE.search("/" + rel)
+                    or _GENERATED_FILE.search(fn)):
                 continue
             try:
                 if os.path.getsize(os.path.join(dirpath, fn)) > MAX_FILE_BYTES:
@@ -173,32 +185,42 @@ def file_language(rel: str, h_lang: str) -> str:
     return h_lang if ext == ".h" else EXT_LANG[ext]
 
 
-def language(files: list[str]) -> tuple[str | None, float, str]:
-    """(dominant language, its share of the files, the `.h` resolution). Ties break by
-    language name so re-runs are stable."""
+def language(files: list[str], hint: str | None = None) -> tuple[str | None, float, str]:
+    """(dominant language, its share of the voting files, the `.h` resolution).
+
+    `.h` is ambiguous between C and C++, so headers are left out of the vote: C and C++ are
+    decided by their unambiguous files. Headers are then C++ if the tree has any C++ file, else
+    C. A tree of headers only has no voter; it is C or C++ by GitHub's label (`hint`) if that
+    is one of them, else C. Ties break by language name so re-runs are stable."""
     if not files:
         return None, 0.0, "c"
     exts = Counter(os.path.splitext(f)[1].lower() for f in files)
     h_lang = "c++" if any(exts.get(e) for e in _CXX_EXTS) else "c"
-    by_lang = Counter(file_language(f, h_lang) for f in files)
+    voters = [f for f in files if os.path.splitext(f)[1].lower() != ".h"]
+    if not voters:
+        lang = (hint or "").lower()
+        return (lang if lang in ("c", "c++") else "c"), 1.0, h_lang
+    by_lang = Counter(file_language(f, h_lang) for f in voters)
     lang = max(sorted(by_lang), key=by_lang.get)
-    return lang, round(by_lang[lang] / len(files), 4), h_lang
+    return lang, round(by_lang[lang] / len(voters), 4), h_lang
 
 
 def functions(root: str, files: list[str]) -> dict:
     """lizard function and line counts over `files`."""
     import lizard
-    n_funcs = n_with = nloc = 0
+    n_funcs = n_with = nloc = n_unparsed = 0
     for rel in files:
         try:
             info = lizard.analyze_file(os.path.join(root, rel))
         except Exception:
+            n_unparsed += 1              # counted, so a parser gap is visible, not silent
             continue
         n = len(info.function_list)
         n_funcs += n
         n_with += 1 if n else 0
         nloc += info.nloc or 0
-    return {"n_functions": n_funcs, "n_files_with_functions": n_with, "nloc": nloc}
+    return {"n_functions": n_funcs, "n_files_with_functions": n_with, "nloc": nloc,
+            "n_unparsed_files": n_unparsed}
 
 
 def history_counts(root: str) -> dict:
@@ -225,16 +247,18 @@ def clone(url: str, dest: str, history: bool = False,
     return None if err is None else f"clone failed: {err}"
 
 
-def measure(url: str, dest: str, history: bool = False, timeout: float = CLONE_TIMEOUT) -> dict:
+def measure(url: str, dest: str, history: bool = False, timeout: float = CLONE_TIMEOUT,
+            hint: str | None = None) -> dict:
     """Clone `url` into `dest` and measure it at the commit its default branch is on now. That
     commit is the pin: it is the code that was checked against the criteria. The history
-    measures are taken only with `history` (they need the full history)."""
+    measures are taken only with `history` (they need the full history). `hint` is GitHub's
+    language label, used only to tell C from C++ in a tree of headers alone."""
     err = clone(url, dest, history, timeout)
     if err:
         return {"error": err}
     commit = _git(["rev-parse", "HEAD"], dest).stdout.strip()
     files = source_files(dest)
-    lang, share, _ = language(files)
+    lang, share, _ = language(files, hint)
     return {"commit": commit,
             "commit_date": _git(["show", "-s", "--format=%cI", "HEAD"], dest).stdout.strip(),
             "language": lang, "language_share": share, "n_source_files": len(files),

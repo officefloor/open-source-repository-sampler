@@ -253,10 +253,13 @@ def verify(sample: str, fetch: bool = False, log=print) -> list[str]:
         with tempfile.TemporaryDirectory(prefix="osrs-verify-") as tmp:
             _git(["init", "--quiet", "--bare"], tmp)
             for r in rows:
-                res = _git(["fetch", "--depth", "1", "--quiet", r["url"], r["commit"]], tmp, 600)
-                if res.returncode != 0:
+                # Stall-aborted and retried, so a transient outage is not reported as a lost
+                # commit.
+                err = network_git(["fetch", "--depth", "1", "--quiet", r["url"], r["commit"]],
+                                  tmp, 600)
+                if err:
                     problems.append(f"{r['full_name']}: commit {r['commit'][:12]} can no "
-                                    f"longer be fetched")
+                                    f"longer be fetched ({err})")
                 else:
                     log(f"OK  {r['full_name']} @ {r['commit'][:12]}")
     return problems

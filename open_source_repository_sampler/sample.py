@@ -1,16 +1,19 @@
 """Draw a sample: seeded, stratified, grown until each language has its target of usable
 repositories, every repository pinned to the commit that met the criteria.
 
-The loop, in seeded rounds: every language still short of its target draws the next
-BATCH_PER_TIER candidates from each of its tiers (in that stratum's frozen draw order), clones
-and measures each, and decides it usable or excluded by the criteria alone. A language is done
-when it has `target` usable repositories, or all of its strata are exhausted (reported, not
-hidden). Usable repositories count toward the language DETECTED in their source, not the
-stratum they were drawn from, so a C++ project labelled C on GitHub counts as C++.
+The loop, in seeded rounds: every language still short of its target draws the next candidate
+from each of its tiers (in that stratum's frozen draw order), clones and measures it, and
+decides it usable or excluded by the criteria alone. A language stops the moment it has
+`target` usable repositories, or when all of its strata are exhausted (reported, not hidden).
+Usable repositories count toward the language DETECTED in their source, not the stratum they
+were drawn from, so a C++ project labelled C on GitHub counts as C++.
 
 Every candidate drawn is written to the CSV, usable or not, so the sample shows that nothing
-was hand-picked. Progress is checkpointed after every candidate, so an interrupted run resumes
-where it stopped, from the same frozen frame, by re-running the same command.
+was hand-picked. A candidate that could not be inspected (its clone failed) is `error`, not
+`excluded`: loss to infrastructure is kept apart from exclusion by the criteria, because it
+can fall unevenly (a clone timeout falls hardest on the largest projects). Progress is
+checkpointed after every candidate, so an interrupted run resumes where it stopped, from the
+same frozen frame, by re-running the same command.
 """
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ import tempfile
 
 from . import files, frame, measure, provenance
 
-BATCH_PER_TIER = 2           # candidates drawn per tier, per short language, per round
+BATCH_PER_TIER = 1           # candidates drawn per tier, per short language, per round
 
 # The criteria: (parameter, measured column, comparison). A repository is usable when it was
 # measured, its detected language is one of the sampled languages, and it meets every bound.
@@ -46,7 +49,6 @@ DEFAULTS = {
     "tiers": list(frame.TIERS),
     "target": 30,
     "seed": 1,
-    "pool": 400,
     "exclude_owners": [],
     "min_functions": 50,
     "min_files_with_functions": 15,
@@ -61,6 +63,8 @@ DEFAULTS = {
 # Parameters that shape WHICH repositories are sampled. A resumed run must match these
 # exactly; `pause` and `max_clones` only pace or bound the run.
 _SHAPING = [k for k in DEFAULTS if k not in ("pause", "max_clones")]
+
+STATUSES = ("usable", "excluded", "error")
 
 
 def _now() -> str:
@@ -84,10 +88,17 @@ def clone_notice(params: dict) -> str:
             "these criteria exactly. History columns will be empty.")
 
 
+def frame_notice(params: dict) -> str:
+    return (f"NOTE: the whole population of each stratum ({len(params['langs'])} languages x "
+            f"{len(params['tiers'])} tiers) is enumerated from GitHub search first, about one "
+            f"request per {frame.PAGE} repositories, so every repository has the same chance "
+            f"of being drawn. Large strata (a popular language's low tier) take minutes.")
+
+
 def judge(row: dict, params: dict) -> tuple[str, str]:
     """(status, reason) for a measured row, by the criteria alone."""
     if row.get("error"):
-        return "excluded", row["error"]
+        return "error", row["error"]
     if row.get("language") not in params["langs"]:
         return "excluded", f"language {row.get('language') or 'none'} not sampled"
     failed = [f"{col} {row.get(col)} < {params[p]}"
@@ -150,6 +161,7 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
     exclude = {o.lower() for o in params["exclude_owners"]}
     history = needs_history(params)
     log(clone_notice(params))
+    log(frame_notice(params))
     shaping = {k: params[k] for k in _SHAPING}
 
     old, strata, rows, started, old_sampler = prog.load()
@@ -175,14 +187,16 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
     def stratum(lang: str, tier: str) -> dict:
         key = (lang, tier)
         if key not in strata:
-            log(f"  searching GitHub: {lang}/{tier} ...")
-            s = frame.stratum(lang, tier, params["seed"], params["pool"], exclude,
-                              params["pause"], search)
+            log(f"  enumerating GitHub: {lang}/{tier} ...")
+            # A search failure raises FrameError here, before anything is checkpointed for
+            # this stratum, so a re-run enumerates it afresh instead of freezing a gap.
+            s = frame.stratum(lang, tier, params["seed"], exclude, params["pause"], search, log)
             prog.add("stratum", s)
             strata[key] = s
-            errs = [b["error"] for b in s["bands"] if b["error"]]
-            log(f"  {lang}/{tier}: {sum(b['total_matched'] for b in s['bands'])} matched, "
-                f"{len(s['order'])} in the draw order" + (f"  SEARCH ERROR {errs[0]}" if errs else ""))
+            trunc = [b["band"] for b in s["bands"] if b["truncated"]]
+            log(f"  {lang}/{tier}: {s['population']} in the population, {len(s['order'])} "
+                f"enumerated in {len(s['bands'])} band(s)"
+                + (f"  TRUNCATED bands: {trunc}" if trunc else ""))
         return strata[key]
 
     drawn = {r["url"] for r in rows}
@@ -215,6 +229,8 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
             for lang in short:
                 took = 0
                 for tier in params["tiers"]:
+                    if usable_by_lang()[lang] >= params["target"]:
+                        break            # stop at the target exactly, not at the round's end
                     order = stratum(lang, tier)["order"]
                     key = (lang, tier)
                     took_tier = 0
@@ -226,7 +242,8 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
                         dest = os.path.join(work, "repo")
                         log(f"  [{len(rows) + 1}] {lang}/{tier} {cand['full_name']} "
                             f"({cand['stars']} stars) ...")
-                        m = measure_fn(cand["url"], dest, history=history)
+                        m = measure_fn(cand["url"], dest, history=history,
+                                       hint=cand.get("github_language"))
                         shutil.rmtree(dest, ignore_errors=True)
                         row = {"draw": len(rows) + 1, **cand, "stratum_language": lang,
                                "tier": tier, "cursor": cursor[key], **m,
@@ -265,7 +282,8 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
         fh.write("\n")
     os.remove(prog.path)
     by = usable_by_lang()
-    log(f"\nwrote {csv_path} ({len(rows)} drawn, {sum(by.values())} usable)")
+    n_err = sum(1 for r in rows if r["status"] == "error")
+    log(f"\nwrote {csv_path} ({len(rows)} drawn, {sum(by.values())} usable, {n_err} errors)")
     log(f"wrote {deriv_path}")
     for lang in params["langs"]:
         state = "exhausted" if lang in exhausted else (
@@ -290,9 +308,20 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
                 csv_sha, out_dir) -> dict:
     import shlex
     by = {lang: 0 for lang in params["langs"]}
+    per_stratum = {}
+    for s in sorted(strata):
+        key = f"{s[0]}/{s[1]}"
+        per_stratum[key] = {"population": strata[s]["population"],
+                            "enumerated": len(strata[s]["order"]), "drawn": 0,
+                            "usable": 0, "excluded": 0, "error": 0}
     for r in rows:
         if r["status"] == "usable":
             by[r["language"]] += 1
+        key = f"{r['stratum_language']}/{r['tier']}"
+        per_stratum[key]["drawn"] += 1
+        per_stratum[key][r["status"]] += 1
+    truncated = [f"{s[0]}/{s[1]} {b['band']} ({b['total_matched']} matched)"
+                 for s in sorted(strata) for b in strata[s]["bands"] if b["truncated"]]
     resolved = [provenance.NAME, "sample", *_flags(params), "--out-dir", out_dir]
     if label:
         resolved += ["--label", label]
@@ -338,15 +367,31 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
         "finished_utc": _now(),
         "method": {
             "frame": ("GitHub search/repositories per stratum (language x popularity tier), "
-                      "non-archived non-fork repositories, the excluded owners removed; each "
-                      "tier split into star bands (GitHub returns at most 1000 results per "
-                      "query), up to `pool` candidates fetched per stratum."),
-            "draw_order": ("per stratum, each band's candidates shuffled by Python's "
-                           "random.Random seeded with '<seed>:<language>:<tier>', then bands "
-                           "interleaved at random weighted by each band's match count."),
+                      "non-archived non-fork repositories, the excluded owners removed. Each "
+                      "tier is split into star bands (then creation-date bands) until every "
+                      f"band matches at most {frame.SEARCH_CAP} repositories (GitHub's cap per "
+                      "query), and every band is fetched whole, so the frame is the complete "
+                      "population of the stratum as GitHub search lists it. A band that could "
+                      "not be split below the cap is marked truncated; see summary.truncated_"
+                      "bands. A failed search stops the run rather than leaving a gap."),
+            "draw_order": ("per stratum, the enumerated candidates sorted by name and shuffled "
+                           "by Python's random.Random seeded with '<seed>:<language>:<tier>': "
+                           "a simple random sample within the stratum, independent of every "
+                           "other stratum."),
             "growth": (f"in rounds, each language short of its target draws the next "
-                       f"{BATCH_PER_TIER} candidates of each of its tiers; a language stops at "
-                       f"`target` usable repositories or when its strata are exhausted."),
+                       f"{BATCH_PER_TIER} candidate of each of its tiers in turn (tiers in the "
+                       f"order given); a language stops the moment it has `target` usable "
+                       f"repositories, or when its strata are exhausted."),
+            "allocation": ("disproportionate: tiers are drawn equally regardless of population, "
+                           "so the pooled sample over-represents high-star repositories, and "
+                           "the usable split across tiers follows each tier's exclusion rate. "
+                           "For estimates about the population, weight each stratum by "
+                           "population / usable from summary.per_stratum. Comparisons between "
+                           "tiers need no weights."),
+            "cross_stratum": ("a usable repository counts toward its detected language, not "
+                              "the GitHub label it was drawn under, so a repository mislabelled "
+                              "on GitHub enters with its label's stratum's sampling fraction; "
+                              "the CSV records both (language, stratum_language)."),
             "pin": ("each candidate is cloned at its default branch as it is when drawn; that "
                     "commit is recorded and is what every measure and criterion describes. The "
                     "clone is deleted once its row is written."),
@@ -356,21 +401,34 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
                            "pinned commit is all the criteria need; the history columns are "
                            "left empty"),
             "language_detection": ("dominant language of the project's own source files (tests, "
-                                   "vendored, generated and build trees excluded) by file count; "
-                                   ".h is C++ when the tree holds any unambiguous C++ file, "
-                                   "else C. A usable repository counts toward its detected "
-                                   "language, not its stratum."),
+                                   "vendored and generated code excluded; build-output "
+                                   "directories excluded at the repository root only) by file "
+                                   "count. `.h` headers are measured but do not vote (they are "
+                                   "C or C++ by the other files; an all-header tree takes "
+                                   "GitHub's label when it is C or C++, else C). A usable "
+                                   "repository counts toward its detected language, not its "
+                                   "stratum."),
+            "status": ("usable: measured and met every criterion; excluded: measured and did "
+                       "not (reason says which); error: could not be inspected (clone failed), "
+                       "kept apart because such loss can fall unevenly, e.g. on the largest "
+                       "projects when the full history is cloned."),
             "usable_rule": ("measured; detected language in `langs`; and "
                             + "; ".join(f"{col} >= {p} ({desc})" for p, col, desc in CRITERIA)
                             + ". Decided on these generic measures only, before any study "
-                              "looks at the repository."),
+                              "looks at the repository. Function counts come from lizard and "
+                              "are not comparable across languages (it counts different "
+                              "constructs per language), so a fixed bound is a different "
+                              "threshold per language."),
         },
         "tier_qualifiers": {t: frame.TIERS[t] for t in params["tiers"]},
-        "tier_star_bands": {t: frame.TIER_BANDS[t] for t in params["tiers"]},
         "summary": {
             "drawn": len(rows),
             "usable": sum(by.values()),
+            "excluded": sum(1 for r in rows if r["status"] == "excluded"),
+            "error": sum(1 for r in rows if r["status"] == "error"),
             "usable_per_language": by,
+            "per_stratum": per_stratum,
+            "truncated_bands": truncated,
             "exhausted_languages": sorted(exhausted),
             "short_languages": sorted(lang for lang in params["langs"]
                                       if by[lang] < params["target"] and lang not in exhausted),
@@ -378,11 +436,11 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
         # The frozen frame: every query, its match count and every candidate fetched, in rank
         # order, so the seeded draw order can be re-derived and audited offline.
         "frame": [{"language": s["language"], "tier": s["tier"],
+                   "population": s["population"],
                    "bands": [{"band": b["band"], "query": b["query"],
-                              "total_matched": b["total_matched"], "error": b["error"],
+                              "total_matched": b["total_matched"], "truncated": b["truncated"],
                               "candidates": [[c["full_name"], c["stars"]]
                                              for c in b["candidates"]]}
                              for b in s["bands"]]}
                   for _, s in sorted(strata.items())],
     }
-
