@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+# stamped by setuptools-scm at build time
+open_source_repository_sampler/_version.py
+.pytest_cache/

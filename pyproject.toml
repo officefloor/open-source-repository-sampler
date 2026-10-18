@@ -1,0 +1,57 @@
+[build-system]
+# setuptools-scm derives the version from the git tag AND stamps the commit into
+# open_source_repository_sampler/_version.py at build time, so a pip-installed sampler (no
+# .git beside it) still knows exactly which commit of itself produced a sample.
+requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-source-repository-sampler"
+dynamic = ["version"]
+description = "Reproducible, seeded, stratified sampling of open-source GitHub repositories for empirical software engineering studies, each repository pinned to the commit that met the criteria."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Daniel Sagenschneider" }]
+keywords = [
+    "mining-software-repositories", "msr", "sampling", "stratified-sampling",
+    "random-sample", "reproducibility", "replication", "github", "open-source",
+    "empirical-software-engineering", "research-software", "dataset",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+# lizard supplies the multi-language function list used by the substance criteria.
+# PINNED, not >=: lizard 1.24.x parses a Java class annotated @Entity then @Table(...) to
+# ZERO functions (measure.check_parser fails closed on it).
+dependencies = ["lizard==1.23.0"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+Source = "https://github.com/officefloor/open-source-repository-sampler"
+
+[project.scripts]
+open-source-repository-sampler = "open_source_repository_sampler.cli:main"
+
+[tool.setuptools]
+packages = ["open_source_repository_sampler"]
+
+[tool.setuptools_scm]
+version_file = "open_source_repository_sampler/_version.py"
+# The commit (and whether the tree was dirty) is stamped beside the version, read by
+# provenance.sampler() when there is no git checkout to ask.
+version_file_template = """\
+# Written by setuptools-scm at build time. Do not edit or commit.
+__version__ = version = {version!r}
+__commit__ = {scm_version.node!r}
+__dirty__ = {scm_version.dirty!r}
+"""
+fallback_version = "0.0.0"

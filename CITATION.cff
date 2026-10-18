@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this sampler or a sample drawn with it, please cite it as below, with the version and commit recorded in the sample's derivation file."
+title: "open-source-repository-sampler: reproducible, stratified samples of open-source repositories"
+type: software
+authors:
+  - family-names: Sagenschneider
+    given-names: Daniel
+license: Apache-2.0
+repository-code: "https://github.com/officefloor/open-source-repository-sampler"
+keywords:
+  - mining software repositories
+  - sampling
+  - stratified sampling
+  - reproducibility
+  - empirical software engineering
+  - GitHub
