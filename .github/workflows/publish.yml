@@ -1,0 +1,51 @@
+# Publish a release to PyPI with Trusted Publishing (no stored token).
+#
+# One-time setup on pypi.org -> Account -> Publishing -> "Add a new pending publisher":
+#   PyPI project name:  open-source-repository-sampler
+#   Owner:              officefloor
+#   Repository name:    open-source-repository-sampler
+#   Workflow name:      publish.yml
+#   Environment name:   pypi
+#
+# Then push a v* tag, or run this workflow by hand on an existing tag (Actions -> publish ->
+# Run workflow -> choose the tag).
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # setuptools-scm stamps the version and commit from git
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refuse anything but a release tag
+        run: |
+          case "$GITHUB_REF" in refs/tags/v*) ;; *) echo "run on a v* tag, not $GITHUB_REF"; exit 1 ;; esac
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write             # the OIDC token PyPI trusts in place of a password
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

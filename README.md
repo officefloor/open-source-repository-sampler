@@ -195,6 +195,12 @@ same code. A new seed gives a completely different set of repositories.
 To cite a sample: *open-source-repository-sample.csv (sha256 …), drawn by
 open-source-repository-sampler 0.1.0 @ `<commit>`, seed 1, on `<date>`*.
 
+## Releasing
+
+Push a `v*` tag. The `publish` workflow builds the release, stamping the tag's commit into the
+package, and publishes it to PyPI by Trusted Publishing (set up once, as described in
+`.github/workflows/publish.yml`).
+
 ## Tests
 
 ```bash
