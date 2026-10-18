@@ -198,6 +198,9 @@ def test_derivation_holds_the_command_and_the_sampler(tmp_path, remotes):
     d = json.loads(open(draw(tmp_path / "s", remotes) and
                         tmp_path / "s" / files.names()[1]).read())
     assert d["derivation_of"] == "open-source-repository-sample.csv"
+    assert next(iter(d)) == "about"                              # first thing a reader sees
+    assert d["about"]["repository"] == "https://github.com/officefloor/open-source-repository-sampler"
+    assert "open-source-repository-sample.csv" in d["about"]["what"]
     assert d["command"] == "open-source-repository-sampler sample"
     assert "--seed 1" in d["resolved_command"] and "--exclude-owners me" in d["resolved_command"]
     assert d["sampler"]["name"] == "open-source-repository-sampler"
@@ -205,6 +208,18 @@ def test_derivation_holds_the_command_and_the_sampler(tmp_path, remotes):
     assert d["frame"][0]["bands"][1]["query"].startswith("language:Java stars:291..400")
     rows = rows_of(tmp_path / "s")
     assert {r["sampler_commit"] for r in rows} == {d["sampler"]["commit"] or ""}
+
+
+def test_about_points_at_the_exact_release_and_source():
+    from open_source_repository_sampler import provenance
+    a = provenance.about({"commit": "abc123", "version": "0.1.1", "dirty": False})
+    repo = "https://github.com/officefloor/open-source-repository-sampler"
+    assert a["source_at_this_commit"] == f"{repo}/tree/abc123"
+    assert a["documentation_at_this_commit"] == f"{repo}/blob/abc123/README.md"
+    assert a["pypi_release"] == "https://pypi.org/project/open-source-repository-sampler/0.1.1/"
+    assert a["install"] == "pip install open-source-repository-sampler==0.1.1"
+    dev = provenance.about({"commit": "abc123", "version": "0.1.2.dev3+gabc123", "dirty": False})
+    assert "pypi_release" not in dev and dev["install"].endswith(".git@abc123'")
 
 
 def test_a_sample_is_never_silently_replaced(tmp_path, remotes):

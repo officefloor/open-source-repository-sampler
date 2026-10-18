@@ -297,7 +297,10 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
     if label:
         resolved += ["--label", label]
     commit = sampler["commit"] or "<unknown commit>"
+    about = provenance.about(sampler)
+    about["what"] = about["what"].replace("{csv}", csv_name)
     return {
+        "about": about,
         "derivation_of": csv_name,
         "csv_sha256": csv_sha,
         "sampler": {**sampler, "tools": provenance.tools()},

@@ -19,6 +19,33 @@ import subprocess
 
 NAME = "open-source-repository-sampler"
 REPOSITORY = "https://github.com/officefloor/open-source-repository-sampler"
+PYPI = "https://pypi.org/project/open-source-repository-sampler"
+
+
+def about(sampler: dict) -> dict:
+    """Where a reader of a sample's files finds the tool that made them, its documentation,
+    and the exact source that ran: for someone who meets the files in a paper's ancillary data
+    with no other context."""
+    commit, version = sampler.get("commit"), sampler.get("version")
+    out = {
+        "what": (f"These two files ({{csv}} and this derivation) are a repository sample made by "
+                 f"{NAME}: a seeded, stratified sample of open-source repositories, each pinned "
+                 f"to the commit that met the sampling criteria. This file records how the "
+                 f"sample was derived and how to reproduce it."),
+        "tool": NAME,
+        "repository": REPOSITORY,
+        "documentation": f"{REPOSITORY}#readme",
+        "pypi": PYPI,
+    }
+    if commit:
+        out["source_at_this_commit"] = f"{REPOSITORY}/tree/{commit}"
+        out["documentation_at_this_commit"] = f"{REPOSITORY}/blob/{commit}/README.md"
+    if version and not sampler.get("dirty") and "dev" not in version and "+" not in version:
+        out["pypi_release"] = f"{PYPI}/{version}/"
+        out["install"] = f"pip install {NAME}=={version}"
+    elif commit:
+        out["install"] = f"pip install 'git+{REPOSITORY}.git@{commit}'"
+    return out
 
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 

@@ -27,7 +27,7 @@ recognised on sight:
 | File | What it is |
 |---|---|
 | `open-source-repository-sample.csv` | One row per candidate drawn: where it is (`url`), the exact code (`commit`), its detected `language`, the criteria measures, `status` (`usable` / `excluded`) with the `reason`, and the `sampler_commit` that produced it |
-| `open-source-repository-sample.derivation.json` | How the sample was derived: the command as typed and fully resolved, every parameter, the sampler's version and commit, tool versions, the method in words, every GitHub query with its match count, the frozen candidate frame, and the CSV's sha256 |
+| `open-source-repository-sample.derivation.json` | Opens with `about`: what the files are, and links to this repository, its documentation and source at the exact commit used, and the PyPI release, so a reader who finds the files in a paper's ancillary data can trace them here. Then how the sample was derived: the command as typed and fully resolved, every parameter, the sampler's version and commit, tool versions, the method in words, every GitHub query with its match count, the frozen candidate frame, and the CSV's sha256 |
 
 Excluded candidates stay in the CSV, so it shows that nothing was hand-picked. Experiments use the
 `usable` rows.
