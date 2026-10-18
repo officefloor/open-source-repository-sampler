@@ -25,9 +25,48 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from collections import Counter
 
 CLONE_TIMEOUT = 600          # seconds; one clone cannot stall the whole run past this
+
+# A dropped connection can leave git waiting indefinitely. A transfer slower than
+# STALL_BYTES_PER_SEC for STALL_SECONDS is aborted, and a failed network operation is retried,
+# so a transient outage neither hangs an unattended run nor (when sampling) excludes a
+# repository that is in fact fine. A failure that is clearly permanent is not retried.
+STALL_BYTES_PER_SEC = 1000
+STALL_SECONDS = 60
+NETWORK_ATTEMPTS = 3
+NETWORK_RETRY_WAIT = 30.0    # seconds between attempts
+_PERMANENT = ("not found", "could not read username", "authentication failed",
+              "access denied", "does not appear to be a git repository")
+
+
+def network_git(args: list[str], cwd: str | None = None, timeout: float | None = None,
+                prepare=None) -> str | None:
+    """Run a git command that talks to a remote, aborting a stalled transfer and retrying a
+    transient failure. `prepare` runs before each attempt (e.g. to clear a partial clone).
+    None on success, else the last error."""
+    stall = ["-c", f"http.lowSpeedLimit={STALL_BYTES_PER_SEC}",
+             "-c", f"http.lowSpeedTime={STALL_SECONDS}"]
+    err = "?"
+    for attempt in range(1, NETWORK_ATTEMPTS + 1):
+        if attempt > 1:
+            time.sleep(NETWORK_RETRY_WAIT)
+        if prepare:
+            prepare()
+        try:
+            r = subprocess.run(["git", *stall, *args], cwd=cwd, capture_output=True, text=True,
+                               timeout=timeout)
+        except subprocess.TimeoutExpired:
+            err = f"timeout ({timeout:g}s)"
+            continue
+        if r.returncode == 0:
+            return None
+        err = r.stderr.strip()[:160] or "?"
+        if any(p in err.lower() for p in _PERMANENT):
+            return err
+    return f"{err} (after {NETWORK_ATTEMPTS} attempts)"
 
 # Extension -> language. `.h` is deliberately absent: it is ambiguous between C and C++ and
 # is resolved per repository in `language` (C++ when the tree holds any unambiguous C++
@@ -181,13 +220,9 @@ def clone(url: str, dest: str, history: bool = False,
           timeout: float = CLONE_TIMEOUT) -> str | None:
     """Clone the default branch into `dest`: shallow, or with its full history (blobless).
     None on success, else an error."""
-    shutil.rmtree(dest, ignore_errors=True)
-    try:
-        r = subprocess.run(["git", "clone", *clone_flags(history), "--quiet", url, dest],
-                           capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return f"clone timeout ({timeout:g}s)"
-    return None if r.returncode == 0 else "clone failed: " + (r.stderr.strip()[:160] or "?")
+    err = network_git(["clone", *clone_flags(history), "--quiet", url, dest], timeout=timeout,
+                      prepare=lambda: shutil.rmtree(dest, ignore_errors=True))
+    return None if err is None else f"clone failed: {err}"
 
 
 def measure(url: str, dest: str, history: bool = False, timeout: float = CLONE_TIMEOUT) -> dict:

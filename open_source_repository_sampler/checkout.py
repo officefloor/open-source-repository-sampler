@@ -33,6 +33,7 @@ import tempfile
 import time
 
 from . import files
+from .measure import network_git
 
 
 def _git(args: list[str], cwd: str, timeout: float | None = None) -> subprocess.CompletedProcess:
@@ -55,14 +56,14 @@ def clone_at(url: str, commit: str, dest: str, deep: bool = False,
     fetch = ["fetch", "--quiet", "--no-tags", url, commit]
     if not deep:
         fetch[1:1] = ["--depth", "1"]
-    try:
-        for args in (["init", "--quiet"], fetch,
-                     ["checkout", "--quiet", "--detach", "FETCH_HEAD"]):
+    for args in (["init", "--quiet"], fetch, ["checkout", "--quiet", "--detach", "FETCH_HEAD"]):
+        if args is fetch:
+            err = network_git(fetch, dest, timeout)     # stall-aborted and retried
+        else:
             r = _git(args, dest, timeout)
-            if r.returncode != 0:
-                return f"git {args[0]} failed: {r.stderr.strip()[:160]}"
-    except subprocess.TimeoutExpired:
-        return f"timeout ({timeout}s)"
+            err = None if r.returncode == 0 else r.stderr.strip()[:160]
+        if err:
+            return f"git {args[0]} failed: {err}"
     head = _git(["rev-parse", "HEAD"], dest).stdout.strip()
     if head != commit:
         return f"landed on {head[:12]}, not {commit[:12]}"

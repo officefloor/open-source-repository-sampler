@@ -1,15 +1,17 @@
 # Releasing open-source-repository-sampler
 
-Distribution is automated by `.github/workflows/publish.yml`: pushing a `v*` tag builds the
-sdist and wheel and publishes them to PyPI by Trusted Publishing (OIDC, no API token).
+Distribution is automated by `.github/workflows/publish.yml`. Creating a `vMAJOR.MINOR.PATCH`
+tag on `main` and pushing it builds the sdist and wheel, and publishes them to PyPI by Trusted
+Publishing (OIDC, no API token). No tags are created by anything else.
 
 ## Version scheme
 
-Tags are `vMAJOR.MINOR.PATCH`, e.g. `v0.1.0`. The version is not written anywhere in the code:
-setuptools-scm reads it from the tag at build time and stamps it, with the commit, into
-`open_source_repository_sampler/_version.py`. That stamp is how a pip-installed sampler records
-which commit of itself drew a sample. A published version can never be replaced on PyPI, so
-a fix is always a new tag.
+Tags are `vMAJOR.MINOR.PATCH`, e.g. `v0.1.0`, made by hand on a commit of `main`. The tag is
+the only place the version is set. setuptools-scm reads it at build time and stamps it, with the
+commit, into `open_source_repository_sampler/_version.py`. That stamp is how a pip-installed
+sampler records which commit of itself drew a sample. The workflow refuses a tag that is not
+`vMAJOR.MINOR.PATCH`, a tag not on `main`, and a build whose version differs from the tag. A
+published version can never be replaced on PyPI, so a fix is always a new tag.
 
 ## One-time setup: PyPI Trusted Publishing
 
@@ -26,8 +28,9 @@ a fix is always a new tag.
 ## Cutting a release
 
 ```bash
-git tag -a v0.1.1 -m "open-source-repository-sampler 0.1.1"
-git push origin v0.1.1
+git switch main && git pull
+git tag -a v0.1.0 -m "open-source-repository-sampler 0.1.0"
+git push origin v0.1.0
 ```
 
 If a release run failed before the publisher was set up, re-run its failed jobs (Actions >

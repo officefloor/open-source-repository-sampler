@@ -133,6 +133,27 @@ def test_judge_names_every_unmet_criterion():
     assert sample.judge({"error": "clone failed"}, p) == ("excluded", "clone failed")
 
 
+def test_a_transient_network_failure_is_retried_and_a_permanent_one_is_not(tmp_path,
+                                                                          monkeypatch):
+    monkeypatch.setattr(measure, "NETWORK_RETRY_WAIT", 0)
+    tries = []
+    err = measure.network_git(["ls-remote", "file:///no/such/repo"],
+                              prepare=lambda: tries.append(1))
+    assert err and len(tries) == 1                               # permanent: not retried
+    real = subprocess.run
+    calls = []
+
+    def flaky(args, **kw):
+        calls.append(args)
+        if len(calls) < 3:
+            return subprocess.CompletedProcess(args, 128, "", "fatal: early EOF")
+        return real(["git", "--version"], **kw)
+    monkeypatch.setattr(subprocess, "run", flaky)
+    assert measure.network_git(["fetch", "x"]) is None            # third attempt succeeds
+    assert len(calls) == 3
+    assert "http.lowSpeedLimit=1000" in calls[0] and "http.lowSpeedTime=60" in calls[0]
+
+
 def test_parser_is_not_blind():
     measure.check_parser()
 

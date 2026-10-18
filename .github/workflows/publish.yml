@@ -7,13 +7,15 @@
 #   Workflow name:      publish.yml
 #   Environment name:   pypi
 #
-# Then push a v* tag, or run this workflow by hand on an existing tag (Actions -> publish ->
-# Run workflow -> choose the tag).
+# Then release by creating a vMAJOR.MINOR.PATCH tag on a commit of main and pushing it:
+#   git tag -a v0.1.0 -m "open-source-repository-sampler 0.1.0" && git push origin v0.1.0
+# The version comes ONLY from that tag: setuptools-scm reads it at build time, so it is never
+# written in the code. (A failed run can be re-run, or this workflow run by hand on the tag.)
 name: publish
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
   workflow_dispatch:
 
 jobs:
@@ -26,11 +28,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Refuse anything but a release tag
+      - name: Refuse anything but a vMAJOR.MINOR.PATCH tag on main
         run: |
-          case "$GITHUB_REF" in refs/tags/v*) ;; *) echo "run on a v* tag, not $GITHUB_REF"; exit 1 ;; esac
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/*) ;;
+            *) echo "::error::run on a release tag, not $GITHUB_REF"; exit 1 ;;
+          esac
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH"; exit 1
+          fi
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME is not on main"; exit 1
+          fi
       - run: pip install build twine
       - run: python -m build
+      - name: Check the built version is the tag
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          ls dist/
+          ls "dist/open_source_repository_sampler-${want}-py3-none-any.whl" \
+             "dist/open_source_repository_sampler-${want}.tar.gz" >/dev/null \
+            || { echo "::error::built version is not $want"; exit 1; }
       - run: twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
@@ -49,3 +70,6 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A re-run of an already-published version is a no-op, not a failure.
+          skip-existing: true
