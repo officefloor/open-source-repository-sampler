@@ -25,6 +25,12 @@ published version can never be replaced on PyPI, so a fix is always a new tag.
 2. The `pypi` environment already exists in this repository's Settings > Environments.
    Optionally, require a reviewer to approve each publish.
 
+## What a release produces
+
+- the sdist and wheel on PyPI, with a signed provenance record (attestation) tying them to this
+  repository, the tagged commit and the workflow that built them;
+- a GitHub Release for the tag, with generated notes and the same files attached.
+
 ## Cutting a release
 
 ```bash
