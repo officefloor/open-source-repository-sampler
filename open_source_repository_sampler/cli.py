@@ -118,14 +118,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
         return 0
-    if args.only:
+    only = getattr(args, "only", None)     # `verify` takes no --only
+    if only:
         try:
-            checkout.sparse_patterns(args.only)
+            checkout.sparse_patterns(only)
         except ValueError as e:
             print(f"ERROR: --only: {e}", file=sys.stderr)
             return 2
     if args.cmd == "checkout":
-        res = checkout.checkout(args.sample, args.dest, args.langs, args.deep, only=args.only)
+        res = checkout.checkout(args.sample, args.dest, args.langs, args.deep, only=only)
         return 1 if any(r["error"] for r in res) else 0
     if args.cmd == "run":
         if not command:
@@ -133,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         res = checkout.for_each(args.sample, checkout.command_experiment(command), args.deep,
                                 args.langs, args.work_dir, args.keep, args.run_log,
-                                args.fail_fast, only=args.only)
+                                args.fail_fast, only=only)
         return 1 if any(r["status"] == "failed" for r in res) else 0
     if args.cmd == "verify":
         problems = checkout.verify(args.sample, args.fetch)

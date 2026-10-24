@@ -627,3 +627,12 @@ def test_verify_detects_an_edited_csv(tmp_path, remotes):
     path.write_text(path.read_text().replace("usable", "excluded", 1))
     problems = checkout.verify(str(tmp_path / "s"), log=lambda *_: None)
     assert problems and "changed after sampling" in problems[0]
+
+
+def test_verify_command_reports_an_intact_sample_and_an_edited_one(tmp_path, remotes):
+    from open_source_repository_sampler import cli
+    draw(tmp_path / "s", remotes)
+    assert cli.main(["verify", str(tmp_path / "s")]) == 0
+    path = tmp_path / "s" / files.names()[0]
+    path.write_text(path.read_text().replace("usable", "excluded", 1))
+    assert cli.main(["verify", str(tmp_path / "s")]) == 1

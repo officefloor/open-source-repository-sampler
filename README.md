@@ -42,13 +42,13 @@ several samples can sit side by side.
 From PyPI (a released version, pinned):
 
 ```bash
-pip install open-source-repository-sampler==0.2.0
+pip install open-source-repository-sampler==0.2.1
 ```
 
 From git, for experiments not written in Python (the command runs on its own):
 
 ```bash
-git clone --branch v0.2.0 https://github.com/officefloor/open-source-repository-sampler.git
+git clone --branch v0.2.1 https://github.com/officefloor/open-source-repository-sampler.git
 python3 -m venv .venv && .venv/bin/pip install ./open-source-repository-sampler
 ```
 
