@@ -474,6 +474,84 @@ def test_an_incomplete_deep_clone_is_refused(tmp_path, remotes):
                              expected_commits=row["n_commits"]) is None
 
 
+def _mixed_remote(tmp_path):
+    """A repository of source, build files and assets, served with partial-clone support (as
+    GitHub serves it), so a filtered clone really fetches file contents lazily."""
+    url = make_repo(tmp_path, "mixed", {
+        "src/a/A.java": _java(2), "src/a/B.JAVA": _java(1), "pom.xml": "<project/>",
+        "sub/pom.xml": "<project/>", "Dockerfile": "FROM x", "README.md": "hi",
+        "img/logo.png": "not really a png", "lib/dep.jar": "not really a jar"}, commits=2)
+    path = url[len("file://"):]
+    _git(path, "config", "uploadpack.allowFilter", "true")
+    _git(path, "config", "uploadpack.allowAnySHA1InWant", "true")
+    return url, path, _head(path)[0]
+
+
+def _tree(root):
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        for f in filenames:
+            full = os.path.join(dirpath, f)
+            with open(full, "rb") as fh:
+                out[os.path.relpath(full, root)] = fh.read()
+    return out
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_only_downloads_and_checks_out_just_the_matching_files(tmp_path, deep):
+    url, remote, commit = _mixed_remote(tmp_path)
+    dest = str(tmp_path / "c")
+    assert checkout.clone_at(url, commit, dest, deep=deep, only=[".java", "pom.xml"]) is None
+    full = _tree(remote)
+    got = _tree(dest)
+    assert sorted(got) == ["pom.xml", "src/a/A.java", "src/a/B.JAVA", "sub/pom.xml"]
+    assert got == {p: full[p] for p in got}                      # byte-identical to the commit
+    assert _head(dest)[0] == commit
+    assert len(_head(dest, "--all")) == (2 if deep else 1)       # history as without `only`
+    png = subprocess.run(["git", "rev-parse", f"{commit}:img/logo.png"], cwd=remote,
+                         capture_output=True, text=True).stdout.strip()
+    missing = subprocess.run(["git", "cat-file", "-e", png], cwd=dest, capture_output=True)
+    assert missing.returncode != 0                               # never downloaded
+    assert subprocess.run(["git", "remote"], cwd=dest, capture_output=True,
+                          text=True).stdout == ""                # nothing to fetch later from
+    assert subprocess.run(["git", "status", "--porcelain"], cwd=dest, capture_output=True,
+                          text=True).stdout == ""
+
+
+@pytest.mark.parametrize("bad", ["*.java", "src/A.java", "!x", "", "[jJ]ava", ".j?va"])
+def test_only_refuses_a_glob_or_path_rather_than_match_nothing(bad):
+    with pytest.raises(ValueError):
+        checkout.sparse_patterns([".java", bad])
+
+
+def test_a_kept_clone_is_remade_when_only_changes(tmp_path, remotes):
+    draw(tmp_path / "s", remotes)
+    repos = str(tmp_path / "repos")
+    res = checkout.checkout(str(tmp_path / "s"), repos, only=[".kt"], log=lambda *_: None)
+    assert [sorted(_tree(r["path"])) for r in res] == [[], []]
+    res = checkout.checkout(str(tmp_path / "s"), repos, log=lambda *_: None)
+    assert [len(_tree(r["path"])) for r in res] == [4, 4]       # a full clone, not reused
+
+
+def test_for_each_hands_over_only_and_clones_just_those_files(tmp_path, remotes):
+    draw(tmp_path / "s", remotes)
+    seen = {}
+    checkout.for_each(str(tmp_path / "s"),
+                      lambda r: seen.update({r.full_name: (r.only, sorted(_tree(r.path)))}),
+                      only=[".java"], log=lambda *_: None)
+    assert seen == {n: ([".java"], [f"src/C{i}.java" for i in range(4)])
+                    for n in ("o/big1", "o/big2")}
+
+
+def test_run_and_checkout_refuse_a_bad_only(tmp_path, remotes):
+    from open_source_repository_sampler import cli
+    draw(tmp_path / "s", remotes)
+    assert cli.main(["checkout", str(tmp_path / "s"), "--dest", str(tmp_path / "r"),
+                     "--only", "*.java"]) == 2
+    assert not os.path.exists(tmp_path / "r")
+
+
 def test_for_each_runs_each_usable_repository_then_deletes_its_clone(tmp_path, remotes):
     draw(tmp_path / "s", remotes, params=HISTORY)
     seen = []

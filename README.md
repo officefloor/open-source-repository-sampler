@@ -42,13 +42,13 @@ several samples can sit side by side.
 From PyPI (a released version, pinned):
 
 ```bash
-pip install open-source-repository-sampler==0.1.0
+pip install open-source-repository-sampler==0.2.0
 ```
 
 From git, for experiments not written in Python (the command runs on its own):
 
 ```bash
-git clone --branch v0.1.0 https://github.com/officefloor/open-source-repository-sampler.git
+git clone --branch v0.2.0 https://github.com/officefloor/open-source-repository-sampler.git
 python3 -m venv .venv && .venv/bin/pip install ./open-source-repository-sampler
 ```
 
@@ -164,6 +164,13 @@ open-source-repository-sampler run sample/open-source-repository-sample.csv --de
   repositories already done, so an interrupted run resumes and a failed repository is retried.
 - **Options.** `--langs java` limits the run to a subset; `--work-dir` chooses where clones go;
   `--keep` keeps them.
+- **Only the files you read.** `--only .java,pom.xml` downloads just the files with those
+  extensions (any case) or names, at any depth; images, jars and the rest are never fetched,
+  which is most of the download for many repositories. The commit's trees come without file
+  contents (a partial clone), a sparse checkout holds only the matching files, and only their
+  contents are downloaded. Each file is byte-identical to a full clone's; the commit and, with
+  `--deep`, its history are unchanged. A glob or path is refused, so a typo cannot silently
+  leave an empty clone. List every file the experiment reads.
 
 From Python, the same loop:
 
@@ -171,17 +178,18 @@ From Python, the same loop:
 from open_source_repository_sampler import for_each
 
 def experiment(repo):
-    # repo.path, repo.commit, repo.full_name, repo.language, repo.deep, repo.row (the CSV row)
+    # repo.path, repo.commit, repo.full_name, repo.language, repo.deep, repo.row (the CSV row),
+    # repo.only (the extensions and names the clone holds, None for all)
     ...
 
 for_each("sample/open-source-repository-sample.csv", experiment, deep=True,
-         run_log="results/run-log.jsonl")
+         run_log="results/run-log.jsonl", only=[".java", "pom.xml"])
 ```
 
 ### Other commands
 
 ```bash
-open-source-repository-sampler checkout sample --dest repos [--deep]  # clone all, and keep them
+open-source-repository-sampler checkout sample --dest repos [--deep] [--only .java]  # keep them
 open-source-repository-sampler verify sample --fetch  # CSV matches its derivation; commits fetchable
 ```
 

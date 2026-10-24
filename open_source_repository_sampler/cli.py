@@ -1,8 +1,8 @@
 """open-source-repository-sampler: draw, use and verify reproducible samples of repositories.
 
     open-source-repository-sampler sample   --langs java --target 30 --seed 1 --out-dir sample
-    open-source-repository-sampler checkout sample --dest repos [--deep]
-    open-source-repository-sampler run      sample [--deep] -- my-experiment {path} -o out/{full_name}
+    open-source-repository-sampler checkout sample --dest repos [--deep] [--only .java,pom.xml]
+    open-source-repository-sampler run      sample [--deep] [--only .java] -- my-exp {path}
     open-source-repository-sampler verify   sample --fetch
 """
 from __future__ import annotations
@@ -73,6 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--langs", type=_list, default=None, help="only these detected languages")
     cp.add_argument("--deep", action="store_true",
                     help="every commit up to each pinned commit (default: that commit only)")
+    cp.add_argument("--only", type=_list, default=None,
+                    help="only files with these extensions (.java) or names (pom.xml), "
+                         "comma-separated: the rest of each repository is never downloaded")
 
     rp = sub.add_parser(
         "run", help="run an experiment command on each usable repository, one clone at a time",
@@ -86,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--deep", action="store_true",
                     help="every commit up to each pinned commit (default: that commit only)")
     rp.add_argument("--langs", type=_list, default=None, help="only these detected languages")
+    rp.add_argument("--only", type=_list, default=None,
+                    help="only files with these extensions (.java) or names (pom.xml), "
+                         "comma-separated: the rest of each repository is never downloaded")
     rp.add_argument("--work-dir", default=None,
                     help="where clones are made (default: a temporary directory)")
     rp.add_argument("--keep", action="store_true", help="keep each clone after its run")
@@ -112,8 +118,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
         return 0
+    if args.only:
+        try:
+            checkout.sparse_patterns(args.only)
+        except ValueError as e:
+            print(f"ERROR: --only: {e}", file=sys.stderr)
+            return 2
     if args.cmd == "checkout":
-        res = checkout.checkout(args.sample, args.dest, args.langs, args.deep)
+        res = checkout.checkout(args.sample, args.dest, args.langs, args.deep, only=args.only)
         return 1 if any(r["error"] for r in res) else 0
     if args.cmd == "run":
         if not command:
@@ -121,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         res = checkout.for_each(args.sample, checkout.command_experiment(command), args.deep,
                                 args.langs, args.work_dir, args.keep, args.run_log,
-                                args.fail_fast)
+                                args.fail_fast, only=args.only)
         return 1 if any(r["status"] == "failed" for r in res) else 0
     if args.cmd == "verify":
         problems = checkout.verify(args.sample, args.fetch)
