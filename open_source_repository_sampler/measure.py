@@ -14,6 +14,11 @@ repository cannot be selected or dropped on a result.
   * n_commits, n_contributors (distinct author emails), first_commit_date  of the history
     reachable from the pinned commit -- measured only when a criterion needs them.
 
+With an as-of date the pin is the newest commit on the default branch's first-parent history
+committed before it: the history is fetched without trees or contents (`--filter=tree:0`), that
+commit found, and only its tree checked out. The default branch's commit now is kept beside it
+(`head_commit`). A repository with no commit before the date has no code to measure.
+
 The clone is as light as the criteria allow, without costing accuracy. By default it is
 shallow (`--depth 1`): the pinned commit's code is all that the code measures need. Only when a
 criterion is on the history is the full history fetched (blobless, `--filter=blob:none`: every
@@ -233,33 +238,61 @@ def history_counts(root: str) -> dict:
             "first_commit_date": first.strip() or None}
 
 
-def clone_flags(history: bool) -> list[str]:
-    """The `git clone` flags a candidate is cloned with: shallow, or full history (blobless)."""
+def clone_flags(history: bool, as_of: str | None = None) -> list[str]:
+    """The `git clone` flags a candidate is cloned with: shallow, or full history (blobless);
+    with an as-of date, the history's commits alone (treeless), to find the as-of commit."""
+    if as_of:
+        return ["--filter=tree:0", "--no-checkout", "--no-tags"]
     return ["--filter=blob:none", "--no-tags"] if history else ["--depth", "1", "--no-tags"]
 
 
 def clone(url: str, dest: str, history: bool = False,
-          timeout: float = CLONE_TIMEOUT) -> str | None:
-    """Clone the default branch into `dest`: shallow, or with its full history (blobless).
-    None on success, else an error."""
-    err = network_git(["clone", *clone_flags(history), "--quiet", url, dest], timeout=timeout,
-                      prepare=lambda: shutil.rmtree(dest, ignore_errors=True))
+          timeout: float = CLONE_TIMEOUT, as_of: str | None = None) -> str | None:
+    """Clone the default branch into `dest`: shallow, or with its full history (blobless), or
+    with an as-of date its commits alone. None on success, else an error."""
+    err = network_git(["clone", *clone_flags(history, as_of), "--quiet", url, dest],
+                      timeout=timeout, prepare=lambda: shutil.rmtree(dest, ignore_errors=True))
     return None if err is None else f"clone failed: {err}"
 
 
+def as_of_instant(as_of: str) -> str:
+    """The last second before the as-of date (00:00 UTC that day): commits up to it are before."""
+    import datetime
+    day = datetime.date.fromisoformat(as_of) - datetime.timedelta(days=1)
+    return f"{day.isoformat()}T23:59:59Z"
+
+
+def as_of_commit(root: str, as_of: str) -> str:
+    """The newest commit on HEAD's first-parent history committed before the as-of date, or ''
+    (by committer date, as `git rev-list --before` reads it)."""
+    return _git(["rev-list", "--first-parent", "-1", f"--before={as_of_instant(as_of)}", "HEAD"],
+                root).stdout.strip()
+
+
 def measure(url: str, dest: str, history: bool = False, timeout: float = CLONE_TIMEOUT,
-            hint: str | None = None) -> dict:
-    """Clone `url` into `dest` and measure it at the commit its default branch is on now. That
-    commit is the pin: it is the code that was checked against the criteria. The history
-    measures are taken only with `history` (they need the full history). `hint` is GitHub's
-    language label, used only to tell C from C++ in a tree of headers alone."""
-    err = clone(url, dest, history, timeout)
+            hint: str | None = None, as_of: str | None = None) -> dict:
+    """Clone `url` into `dest` and measure it at the commit its default branch is on now, or
+    with `as_of` at the newest first-parent commit before that date. That commit is the pin: it
+    is the code that was checked against the criteria. The history measures are taken only with
+    `history`. `hint` is GitHub's language label, used only to tell C from C++ in a tree of
+    headers alone."""
+    err = clone(url, dest, history, timeout, as_of)
     if err:
         return {"error": err}
+    extra = {}
+    if as_of:
+        head = _git(["rev-parse", "HEAD"], dest).stdout.strip()
+        pinned = as_of_commit(dest, as_of)
+        if not pinned:
+            return {"head_commit": head, "as_of_missing": True}
+        co = _git(["checkout", "--quiet", "--detach", pinned], dest, timeout)   # fetches its tree
+        if co.returncode != 0:
+            return {"head_commit": head, "error": f"checkout failed: {co.stderr.strip()[:160]}"}
+        extra = {"head_commit": head}
     commit = _git(["rev-parse", "HEAD"], dest).stdout.strip()
     files = source_files(dest)
     lang, share, _ = language(files, hint)
     return {"commit": commit,
             "commit_date": _git(["show", "-s", "--format=%cI", "HEAD"], dest).stdout.strip(),
             "language": lang, "language_share": share, "n_source_files": len(files),
-            **functions(dest, files), **(history_counts(dest) if history else {})}
+            **functions(dest, files), **(history_counts(dest) if history else {}), **extra}

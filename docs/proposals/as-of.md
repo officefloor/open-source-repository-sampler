@@ -1,8 +1,8 @@
 # Proposal: sampling repositories as they were on a date (`--as-of`)
 
-**Status:** proposal, not built. Written 1 November 2026 for `long-method-slim-study`, which
-needs human-written code only: each repository as it stood before AI coding assistants were in
-general use.
+**Status:** built (1 November 2026), as proposed; to be released. Written for
+`long-method-slim-study`, which needs human-written code only: each repository as it stood
+before AI coding assistants were in general use.
 
 ## The need
 

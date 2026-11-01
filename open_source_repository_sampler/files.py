@@ -77,12 +77,26 @@ def sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def write_csv(path: str, rows: list[dict]) -> None:
+# With an as-of date the CSV also has, after commit_date, the default branch's commit when drawn
+# (the pin is the newest first-parent commit before the date). Without one, the columns are
+# exactly COLUMNS, so a sample drawn without it is unchanged.
+AS_OF_COLUMNS = ["head_commit"]
+
+
+def columns(as_of: str | None = None) -> list[str]:
+    if not as_of:
+        return list(COLUMNS)
+    i = COLUMNS.index("commit_date") + 1
+    return COLUMNS[:i] + AS_OF_COLUMNS + COLUMNS[i:]
+
+
+def write_csv(path: str, rows: list[dict], as_of: str | None = None) -> None:
+    cols = columns(as_of)
     with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=COLUMNS, extrasaction="ignore", lineterminator="\n")
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore", lineterminator="\n")
         w.writeheader()
         for r in rows:
-            w.writerow({c: "" if r.get(c) is None else r.get(c) for c in COLUMNS})
+            w.writerow({c: "" if r.get(c) is None else r.get(c) for c in cols})
 
 
 def read_sample(path: str, usable_only: bool = True) -> list[dict]:

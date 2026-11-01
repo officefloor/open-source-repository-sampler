@@ -85,6 +85,17 @@ open-source-repository-sampler sample \
   follows each tier's exclusion rate. Comparisons between tiers need no weights. Estimates about
   the population do: weight each stratum by population / usable, both in the derivation's
   `summary.per_stratum`.
+- **As of a date (`--as-of 2020-12-01`).** For a study of code written before a date, such as
+  before AI coding assistants. Only repositories created before the date enter the frame; each
+  is pinned to the newest commit on its default branch's first-parent history whose committer
+  date is before the date, and the criteria and the language are judged on that commit. Its
+  history is fetched without trees or contents (`--filter=tree:0`), so finding the commit is
+  cheap, and only that commit's tree is checked out. The CSV gains `head_commit`, the default
+  branch's commit when drawn, beside the pin; a repository with no commit before the date is
+  `excluded`, and `verify --fetch` derives each as-of commit again. What it cannot correct, and
+  the derivation says so: the stars, the tiers and the frame are GitHub's today, so a repository
+  deleted since is missing and a tier is its popularity now; committer dates can be misstated by
+  rebased history. Without `--as-of` the sample is exactly as before.
 - **Fix the seed first.** The seed is the one value that chooses the sample. Record it (in the
   experiment's step script, or a pre-registration) before the first draw, and use the first
   sample drawn. Re-drawing with new seeds until a sample looks right is selection by another

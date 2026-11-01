@@ -42,7 +42,7 @@ import tempfile
 import time
 
 from . import files
-from .measure import network_git
+from .measure import as_of_commit, network_git
 
 
 def _git(args: list[str], cwd: str, timeout: float | None = None) -> subprocess.CompletedProcess:
@@ -329,6 +329,7 @@ def verify(sample: str, fetch: bool = False, log=print) -> list[str]:
     if commits - {s.get("commit") or ""}:
         problems.append(f"rows name sampler commits {sorted(commits)}, the derivation "
                         f"{s.get('commit')}")
+    as_of = (d.get("parameters") or {}).get("as_of")
     if fetch:
         with tempfile.TemporaryDirectory(prefix="osrs-verify-") as tmp:
             _git(["init", "--quiet", "--bare"], tmp)
@@ -341,6 +342,19 @@ def verify(sample: str, fetch: bool = False, log=print) -> list[str]:
                 if err:
                     problems.append(f"{r['full_name']}: commit {r['commit'][:12]} can no "
                                     f"longer be fetched ({err})")
-                else:
-                    log(f"OK  {r['full_name']} @ {r['commit'][:12]}")
+                    continue
+                if as_of:
+                    # the as-of commit again, from the default branch's history now: rewritten
+                    # history before the date shows here
+                    hist = os.path.join(tmp, "as-of", r["full_name"].replace("/", "__"))
+                    err = network_git(["clone", "--bare", "--filter=tree:0", "--quiet", r["url"],
+                                       hist], None, 600)
+                    again = "" if err else as_of_commit(hist, as_of)
+                    if err or again != r["commit"]:
+                        problems.append(f"{r['full_name']}: the newest first-parent commit before "
+                                        f"{as_of} is {again[:12] or err}, not the pinned "
+                                        f"{r['commit'][:12]}")
+                        continue
+                log(f"OK  {r['full_name']} @ {r['commit'][:12]}"
+                    + (f" (the newest before {as_of})" if as_of else ""))
     return problems

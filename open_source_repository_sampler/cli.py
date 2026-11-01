@@ -17,6 +17,18 @@ def _list(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
+def _as_of(s: str) -> str:
+    """An ISO date in the past: the code is sampled as it stood before it."""
+    import datetime
+    try:
+        d = datetime.date.fromisoformat(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an ISO date (YYYY-MM-DD): {s}")
+    if d > datetime.date.today():
+        raise argparse.ArgumentTypeError(f"{s} is in the future")
+    return d.isoformat()
+
+
 def _sample_args(sp: argparse.ArgumentParser) -> None:
     d = sample.DEFAULTS
     g = sp.add_argument_group("what to sample")
@@ -31,6 +43,11 @@ def _sample_args(sp: argparse.ArgumentParser) -> None:
     g.add_argument("--seed", type=int, default=d["seed"],
                    help=f"the one value that fixes the draw; fix it before the first draw and "
                         f"keep the first sample (default {d['seed']})")
+    g.add_argument("--as-of", type=_as_of, default=d["as_of"],
+                   help="sample repositories as they were before this date (YYYY-MM-DD): only "
+                        "those created before it, each pinned to the newest first-parent commit "
+                        "of its default branch before it, the criteria judged there (default: "
+                        "as they are now)")
     g.add_argument("--exclude-owners", type=_list, default=d["exclude_owners"],
                    help="comma list of GitHub owners never sampled, e.g. your own (a "
                         "conflict-of-interest guard; default none)")

@@ -17,6 +17,9 @@ when, or on the order GitHub happened to return the pages in.
 
 A search that fails, or that GitHub flags as incomplete, is retried, and if it still fails the
 run stops (`FrameError`) rather than freezing a frame with a band missing.
+
+With an as-of date, every band carries `created:` up to the day before it, so the frame is the
+repositories that existed then (as GitHub search lists them today).
 """
 from __future__ import annotations
 
@@ -179,12 +182,21 @@ def band_candidates(lang: str, band: dict, total: int, exclude: set[str], pause:
                            for r, it in enumerate(items, 1)]}
 
 
+def root_band(tier: str, as_of: str | None = None) -> dict:
+    """A tier's whole star range; with an as-of date, only repositories created before it."""
+    band = {"stars": TIER_STARS[tier]}
+    if as_of:
+        last = datetime.date.fromisoformat(as_of) - datetime.timedelta(days=1)
+        band["created"] = (CREATED_FROM.isoformat(), last.isoformat())
+    return band
+
+
 def stratum(lang: str, tier: str, seed: int, exclude: set[str], pause: float,
-            search=gh_search, log=lambda *_: None) -> dict:
+            search=gh_search, log=lambda *_: None, as_of: str | None = None) -> dict:
     """The frozen frame of one stratum: every band's query, match count and every candidate
     fetched (in rank order), plus the seeded draw order over the whole enumeration."""
     bands = [band_candidates(lang, b, n, exclude, pause, search)
-             for b, n in leaves(lang, {"stars": TIER_STARS[tier]}, exclude, pause, search, log)]
+             for b, n in leaves(lang, root_band(tier, as_of), exclude, pause, search, log)]
     return {"language": lang, "tier": tier, "bands": bands,
             "population": sum(b["total_matched"] for b in bands),
             "order": draw_order(bands, f"{seed}:{lang}:{tier}")}

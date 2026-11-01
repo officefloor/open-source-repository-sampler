@@ -57,6 +57,7 @@ DEFAULTS = {
     "min_commits": 0,
     "min_contributors": 0,
     "min_language_share": 0.0,
+    "as_of": None,
     "max_clones": 2000,
     "pause": 2.0,
 }
@@ -77,6 +78,11 @@ def needs_history(params: dict) -> bool:
 
 def clone_notice(params: dict) -> str:
     """Said before any download, so the cost of the run is known up front."""
+    if params.get("as_of"):
+        return (f"NOTE: AS OF {params['as_of']}: each candidate's history is fetched without "
+                "trees or contents, the newest first-parent commit before that date found, and "
+                "only that commit's tree checked out. Larger than a shallow clone, much smaller "
+                "than a full one.")
     set_ = [f"--{p.replace('_', '-')} {params[p]}" for p in HISTORY_CRITERIA if params[p] > 0]
     if set_:
         return ("NOTE: FULL-HISTORY clones (every commit, blobless) because of "
@@ -99,6 +105,8 @@ def judge(row: dict, params: dict) -> tuple[str, str]:
     """(status, reason) for a measured row, by the criteria alone."""
     if row.get("error"):
         return "error", row["error"]
+    if row.get("as_of_missing"):
+        return "excluded", f"no commit before as-of {params['as_of']}"
     if row.get("language") not in params["langs"]:
         return "excluded", f"language {row.get('language') or 'none'} not sampled"
     failed = [f"{col} {row.get(col)} < {params[p]}"
@@ -173,7 +181,7 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
         started = _now()
         prog.add("parameters", {"parameters": shaping, "started_utc": started,
                                 "sampler": sampler})
-    elif old != shaping:
+    elif {"as_of": None, **old} != shaping:      # a checkpoint from before as_of has none
         raise RuntimeError(f"{prog.path} holds a run with different parameters; finish it with "
                            f"its original command, or delete that file to start afresh.")
     elif (old_sampler or {}).get("commit") != sampler["commit"]:
@@ -190,7 +198,8 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
             log(f"  enumerating GitHub: {lang}/{tier} ...")
             # A search failure raises FrameError here, before anything is checkpointed for
             # this stratum, so a re-run enumerates it afresh instead of freezing a gap.
-            s = frame.stratum(lang, tier, params["seed"], exclude, params["pause"], search, log)
+            s = frame.stratum(lang, tier, params["seed"], exclude, params["pause"], search, log,
+                              as_of=params.get("as_of"))
             prog.add("stratum", s)
             strata[key] = s
             trunc = [b["band"] for b in s["bands"] if b["truncated"]]
@@ -242,8 +251,9 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
                         dest = os.path.join(work, "repo")
                         log(f"  [{len(rows) + 1}] {lang}/{tier} {cand['full_name']} "
                             f"({cand['stars']} stars) ...")
+                        as_of = {"as_of": params["as_of"]} if params.get("as_of") else {}
                         m = measure_fn(cand["url"], dest, history=history,
-                                       hint=cand.get("github_language"))
+                                       hint=cand.get("github_language"), **as_of)
                         shutil.rmtree(dest, ignore_errors=True)
                         row = {"draw": len(rows) + 1, **cand, "stratum_language": lang,
                                "tier": tier, "cursor": cursor[key], **m,
@@ -274,7 +284,7 @@ def run(params: dict, out_dir: str, label: str | None, argv: list[str],
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
-    files.write_csv(csv_path, rows)
+    files.write_csv(csv_path, rows, params.get("as_of"))
     derivation = _derivation(params, rows, strata, exhausted, sampler, started, argv,
                              label, csv_name, files.sha256(csv_path), out_dir)
     with open(deriv_path, "w") as fh:
@@ -296,6 +306,8 @@ def _flags(params: dict) -> list[str]:
     """The fully resolved command-line flags for `params` (defaults written out)."""
     out = []
     for k, v in params.items():
+        if v is None:
+            continue                     # an option not given (as_of) is not written out
         flag = "--" + k.replace("_", "-")
         if isinstance(v, list):
             out += [flag, ",".join(v)] if v else []
@@ -326,9 +338,10 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
     if label:
         resolved += ["--label", label]
     commit = sampler["commit"] or "<unknown commit>"
+    as_of = params.get("as_of")
     about = provenance.about(sampler)
     about["what"] = about["what"].replace("{csv}", csv_name)
-    return {
+    derivation = {
         "about": about,
         "derivation_of": csv_name,
         "csv_sha256": csv_sha,
@@ -339,8 +352,10 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
         # How every candidate was cloned for inspection, stated outright rather than left to
         # be inferred from the parameters and the sampler's version.
         "sampling_clone": {
-            "mode": "full-history" if needs_history(params) else "shallow",
-            "git_clone": " ".join(["git", "clone", *measure.clone_flags(needs_history(params)),
+            "mode": ("as-of: the history's commits, then the as-of commit's tree" if as_of
+                     else "full-history" if needs_history(params) else "shallow"),
+            "git_clone": " ".join(["git", "clone",
+                                     *measure.clone_flags(needs_history(params), as_of),
                                      "<url>", "<dir>"]),
             "because": ([f"{p} = {params[p]}" for p in HISTORY_CRITERIA if params[p] > 0]
                         or ["no history criterion is set (" + ", ".join(HISTORY_CRITERIA)
@@ -366,7 +381,9 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
         "started_utc": started,
         "finished_utc": _now(),
         "method": {
-            "frame": ("GitHub search/repositories per stratum (language x popularity tier), "
+            "frame": ((f"repositories created before {as_of} only (every band carries "
+                       f"created: up to the day before); " if as_of else "")
+                      + "GitHub search/repositories per stratum (language x popularity tier), "
                       "non-archived non-fork repositories, the excluded owners removed. Each "
                       "tier is split into star bands (then creation-date bands) until every "
                       f"band matches at most {frame.SEARCH_CAP} repositories (GitHub's cap per "
@@ -392,7 +409,14 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
                               "the GitHub label it was drawn under, so a repository mislabelled "
                               "on GitHub enters with its label's stratum's sampling fraction; "
                               "the CSV records both (language, stratum_language)."),
-            "pin": ("each candidate is cloned at its default branch as it is when drawn; that "
+            "pin": ((f"as of {as_of}: each candidate is pinned to the newest commit on its "
+                     f"default branch's first-parent history whose committer date is before "
+                     f"{as_of} 00:00 UTC (git rev-list --first-parent -1 --before="
+                     f"{measure.as_of_instant(as_of)}); that commit is recorded and is what every "
+                     f"measure and criterion describes, and the default branch's commit when "
+                     f"drawn is kept as head_commit. A candidate with no commit before the date is "
+                     f"excluded. The clone is deleted once its row is written.") if as_of else
+                    "each candidate is cloned at its default branch as it is when drawn; that "
                     "commit is recorded and is what every measure and criterion describes. The "
                     "clone is deleted once its row is written."),
             "clone": ("full history (blobless): a history criterion is set, so n_commits, "
@@ -444,3 +468,10 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
                              for b in s["bands"]]}
                   for _, s in sorted(strata.items())],
     }
+    if as_of:
+        derivation["method"]["as_of_limits"] = (
+            "The frame, the stars and the tiers are GitHub's when drawn, not as of the date: a "
+            "repository deleted or made private since is not in the frame, and a tier is a "
+            "repository's popularity now. The default branch is today's. Committer dates can be "
+            "misstated by rebased or imported history.")
+    return derivation
