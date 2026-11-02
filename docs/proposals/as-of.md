@@ -1,6 +1,6 @@
 # Proposal: sampling repositories as they were on a date (`--as-of`)
 
-**Status:** built and released in 0.3.0 (1 November 2026), as proposed. Written for
+**Status:** built and released in 0.3.0 (1 November 2026), as proposed. Fixed in 0.3.1: the checkout of the as-of commit, which fetches its tree from the remote, now runs as the clone does (bounded, a stalled transfer aborted, retried), and a failure is that candidate's `error`; in 0.3.0 a checkout timeout ended the run. Written for
 `long-method-slim-study`, which needs human-written code only: each repository as it stood
 before AI coding assistants were in general use.
 

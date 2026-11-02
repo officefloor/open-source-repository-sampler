@@ -166,3 +166,36 @@ def test_the_command_refuses_a_bad_or_future_date(bad, capsys):
     with pytest.raises(SystemExit):
         cli.main(["sample", "--as-of", bad, "--out-dir", "/nonexistent"])
     assert "--as-of" in capsys.readouterr().err
+
+
+# --- the checkout is a network operation -------------------------------------------------------
+
+def test_a_checkout_that_times_out_is_an_error_and_the_draw_goes_on(tmp_path, monkeypatch):
+    """The as-of checkout fetches the pinned commit's tree from the remote. One that never
+    finishes (a very large repository on a slow link) is that candidate's error, after the
+    retries, not the end of the run: 0.3.0 let the timeout escape and the run stopped."""
+    remotes = {}
+    for name in ("huge", "old1", "old2"):
+        remotes[f"o/{name}"], _, _ = dated_repo(tmp_path, name)
+    monkeypatch.setattr(measure, "NETWORK_RETRY_WAIT", 0)
+    real = subprocess.run
+    attempts = []
+
+    def slow(args, **kw):
+        if "checkout" in args and kw.get("cwd"):
+            origin = real(["git", "config", "remote.origin.url"], cwd=kw["cwd"],
+                          capture_output=True, text=True).stdout.strip()
+            if origin == remotes["o/huge"]:
+                attempts.append(args)
+                raise subprocess.TimeoutExpired(args, kw.get("timeout"))
+        return real(args, **kw)
+    monkeypatch.setattr(subprocess, "run", slow)
+    # a target of 3 from 3 candidates: every one is drawn, whatever the seeded order
+    draw(tmp_path / "s", remotes, {**PARAMS, "as_of": AS_OF, "target": 3})
+    by = {r["full_name"]: r for r in rows_of(tmp_path / "s")}
+    assert len(attempts) == measure.NETWORK_ATTEMPTS
+    assert "http.lowSpeedLimit=1000" in attempts[0]           # a stalled fetch is aborted too
+    assert by["o/huge"]["status"] == "error"
+    assert by["o/huge"]["reason"].startswith("checkout failed: timeout")
+    assert by["o/huge"]["head_commit"] and not by["o/huge"]["commit"]
+    assert sorted(n for n, r in by.items() if r["status"] == "usable") == ["o/old1", "o/old2"]

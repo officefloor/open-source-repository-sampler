@@ -42,7 +42,7 @@ several samples can sit side by side.
 From PyPI (a released version, pinned):
 
 ```bash
-pip install open-source-repository-sampler==0.2.1
+pip install open-source-repository-sampler==0.3.1
 ```
 
 From git, for experiments not written in Python (the command runs on its own):

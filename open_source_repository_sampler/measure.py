@@ -285,9 +285,12 @@ def measure(url: str, dest: str, history: bool = False, timeout: float = CLONE_T
         pinned = as_of_commit(dest, as_of)
         if not pinned:
             return {"head_commit": head, "as_of_missing": True}
-        co = _git(["checkout", "--quiet", "--detach", pinned], dest, timeout)   # fetches its tree
-        if co.returncode != 0:
-            return {"head_commit": head, "error": f"checkout failed: {co.stderr.strip()[:160]}"}
+        # The checkout fetches the pinned commit's tree and files from the remote: a network
+        # operation like the clone, so it is bounded, aborted when stalled and retried the same
+        # way, and a failure is the candidate's error, not the run's end.
+        err = network_git(["checkout", "--quiet", "--detach", pinned], dest, timeout)
+        if err:
+            return {"head_commit": head, "error": f"checkout failed: {err}"}
         extra = {"head_commit": head}
     commit = _git(["rev-parse", "HEAD"], dest).stdout.strip()
     files = source_files(dest)
