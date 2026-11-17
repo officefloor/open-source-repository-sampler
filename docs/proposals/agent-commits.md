@@ -1,6 +1,6 @@
 # Proposal: sampling repositories with declared agent commits (`--min-agent-commits`)
 
-**Status:** built, not yet released (18 November 2026). Asked for by `placement-gravity-study`,
+**Status:** built and released in 0.4.0 (18 November 2026). Asked for by `placement-gravity-study`,
 which sets code an AI coding agent declares as its own beside code written before the
 assistants existed (`--as-of`).
 
@@ -33,6 +33,16 @@ A commit is a declared agent commit when one of the built-in signatures (`agents
 Version 1 of the signatures covers Claude Code, GitHub Copilot's coding agent, Cursor, Devin,
 Codex, Jules, aider and OpenHands. Each carries its basis: `documented` (the agent's own
 documentation or changelog) or `observed` (the identity its commits carry on GitHub).
+
+The `observed` identities were checked against GitHub's commit search on 18 November 2026, each
+returning commits under exactly that identity: `copilot-swe-agent[bot]
+<198982749+Copilot@users.noreply.github.com>`, `Cursor Agent <cursoragent@cursor.com>`,
+`devin-ai-integration[bot] <158243242+devin-ai-integration[bot]@users.noreply.github.com>`,
+`google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>` and
+`openhands <openhands@all-hands.dev>`. The patterns match on the stable part (the account name or
+the address), not on the numeric id. Not confirmed that way: `claude[bot]` as an author (the
+search is not exact on names), which is kept because a GitHub App's account name is unique, so it
+cannot match anyone else.
 
 ## What it records
 
