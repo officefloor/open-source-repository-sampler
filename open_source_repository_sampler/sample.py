@@ -23,7 +23,7 @@ import os
 import shutil
 import tempfile
 
-from . import files, frame, measure, provenance
+from . import agents, files, frame, measure, provenance
 
 BATCH_PER_TIER = 1           # candidates drawn per tier, per short language, per round
 
@@ -36,13 +36,15 @@ CRITERIA = [
     ("min_nloc", "nloc", "non-comment lines of code"),
     ("min_commits", "n_commits", "commits reachable from the pinned commit"),
     ("min_contributors", "n_contributors", "distinct author emails in that history"),
+    ("min_agent_commits", "n_agent_commits",
+     "commits of that history an AI coding agent declares as its own"),
     ("min_language_share", "language_share", "detected language's share of source files"),
 ]
 
 # Criteria on the history. Only when one of these is set does a candidate's clone fetch the
 # full history; otherwise a shallow clone is all the criteria need, and the history columns are
 # left empty rather than guessed.
-HISTORY_CRITERIA = ("min_commits", "min_contributors")
+HISTORY_CRITERIA = ("min_commits", "min_contributors", "min_agent_commits")
 
 DEFAULTS = {
     "langs": list(frame.LANGS),
@@ -56,6 +58,7 @@ DEFAULTS = {
     "min_nloc": 0,
     "min_commits": 0,
     "min_contributors": 0,
+    "min_agent_commits": 0,
     "min_language_share": 0.0,
     "as_of": None,
     "max_clones": 2000,
@@ -90,7 +93,8 @@ def clone_notice(params: dict) -> str:
                 "most of all for long-lived projects. Drop the history criteria for shallow "
                 "clones.")
     return ("NOTE: SHALLOW clones (pinned commit only), as no history criterion "
-            "(--min-commits, --min-contributors) is set: the lightest download that measures "
+            "(--min-commits, --min-contributors, --min-agent-commits) is set: the lightest "
+            "download that measures "
             "these criteria exactly. History columns will be empty.")
 
 
@@ -361,7 +365,10 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
                         or ["no history criterion is set (" + ", ".join(HISTORY_CRITERIA)
                             + " are 0)"]),
             "history_columns_measured": needs_history(params),
-            "history_columns": ["n_commits", "n_contributors", "first_commit_date"],
+            "history_columns": ["n_commits", "n_contributors", "first_commit_date",
+                                "n_agent_commits", "first_agent_commit_date", "agents"],
+            # What counted as a declared agent commit, when the history was read.
+            **({"agent_signatures": agents.describe()} if needs_history(params) else {}),
         },
         "reproduce": {
             "the_same_code": (f"{provenance.NAME} checkout {csv_name} --dest repos  "
@@ -420,7 +427,8 @@ def _derivation(params, rows, strata, exhausted, sampler, started, argv, label, 
                     "commit is recorded and is what every measure and criterion describes. The "
                     "clone is deleted once its row is written."),
             "clone": ("full history (blobless): a history criterion is set, so n_commits, "
-                      "n_contributors and first_commit_date are measured" if needs_history(params)
+                      "n_contributors, first_commit_date and the declared agent commits are "
+                      "measured" if needs_history(params)
                       else "shallow (depth 1): no history criterion is set, so the code at the "
                            "pinned commit is all the criteria need; the history columns are "
                            "left empty"),

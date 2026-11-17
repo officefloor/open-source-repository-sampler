@@ -46,12 +46,15 @@ COLUMNS = [
     "n_commits",             # reachable from the pinned commit
     "n_contributors",        # distinct author emails reachable from the pinned commit
     "first_commit_date",
+    "n_agent_commits",       # commits an AI coding agent declares as its own (agents.py)
+    "first_agent_commit_date",
+    "agents",                # "name:count;..." of the agents those commits declare
     "sampler_version",
     "sampler_commit",        # the commit of the sampler that produced this row
 ]
 INT_COLUMNS = {"draw", "stars", "rank", "n_source_files", "n_functions",
                "n_files_with_functions", "nloc", "n_unparsed_files", "n_commits",
-               "n_contributors"}
+               "n_contributors", "n_agent_commits"}
 FLOAT_COLUMNS = {"language_share"}
 
 _LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

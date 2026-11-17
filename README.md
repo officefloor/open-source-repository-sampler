@@ -104,7 +104,7 @@ open-source-repository-sampler sample \
   commit is recorded, and every measure and criterion describes the code at that commit. The
   clone is deleted once its row is written.
 - **Only as much clone as the criteria need.** The clone is shallow (depth 1) unless a history
-  criterion (`--min-commits`, `--min-contributors`) is set. Only then is the full history
+  criterion (`--min-commits`, `--min-contributors`, `--min-agent-commits`) is set. Only then is the full history
   fetched, blobless (every commit, but file contents only at the pinned commit), so the history
   counts are exact. Without a history criterion, `n_commits`, `n_contributors` and
   `first_commit_date` are left empty rather than guessed. Sampling starts by saying which
@@ -120,11 +120,25 @@ open-source-repository-sampler sample \
   repository as a `mirror` of one hosted elsewhere.
 - **Criteria.** The criteria are generic and fixed before any study looks at a repository:
   `--min-functions`, `--min-files-with-functions`, `--min-source-files`, `--min-nloc`,
-  `--min-commits`, `--min-contributors`, `--min-language-share`. Function counts come from
+  `--min-commits`, `--min-contributors`, `--min-agent-commits`, `--min-language-share`. Function counts come from
   lizard, which counts different constructs in different languages (and cannot exclude Rust's
   inline test modules), so one `--min-functions` bound is a different threshold per language;
   compare across languages with that in mind. Files lizard could not parse are counted in
   `n_unparsed_files`.
+- **Declared agent commits (`--min-agent-commits 30`).** For a study of code an AI coding agent
+  says it wrote. A commit is a declared agent commit when its author or committer is an agent's
+  account, or its message carries an agent's `Co-authored-by` trailer or the line the agent adds
+  to what it generates. The signatures are built in (`agents.py`: Claude Code, GitHub Copilot's
+  coding agent, Cursor, Devin, Codex, Jules, aider, OpenHands), each marked `documented` (from
+  the agent's own documentation) or `observed` (the identity its commits carry), fixed per
+  release, and written into the derivation (`sampling_clone.agent_signatures`), so a sample
+  states exactly what it counted. Whenever the history is read (any history criterion), the CSV
+  gains `n_agent_commits`, `first_agent_commit_date` and `agents` (`claude:412;copilot:9`).
+  **It counts what commits say, not who wrote the code:** assisted code committed under a
+  person's name with no marker is not counted, and a trailer can be added or removed by hand. So
+  the count is a lower bound, a repository below the bound is not thereby free of AI-written
+  code, and the commits around a declared one are of unknown origin. Combine it with `--as-of`
+  for the opposite case: code from before the assistants existed.
 - **Resume.** An interrupted run resumes from its checkpoint (from the same frozen frame) when
   you re-run the same command.
 - **Safety.** A sample is never silently replaced; pass `--overwrite` to replace one. A sampler

@@ -12,7 +12,9 @@ repository cannot be selected or dropped on a result.
   * n_source_files, n_functions (lizard), n_files_with_functions, nloc  of that source, and
     n_unparsed_files, the files lizard could not parse (they contribute no functions);
   * n_commits, n_contributors (distinct author emails), first_commit_date  of the history
-    reachable from the pinned commit -- measured only when a criterion needs them.
+    reachable from the pinned commit -- measured only when a criterion needs them;
+  * n_agent_commits, first_agent_commit_date, agents  the commits of that history an AI coding
+    agent declares as its own (`agents.py`), measured with the other history columns.
 
 With an as-of date the pin is the newest commit on the default branch's first-parent history
 committed before it: the history is fetched without trees or contents (`--filter=tree:0`), that
@@ -233,9 +235,11 @@ def history_counts(root: str) -> dict:
     n = _git(["rev-list", "--count", "HEAD"], root).stdout.strip()
     emails = _git(["log", "--format=%aE", "HEAD"], root).stdout.split()
     first = _git(["log", "--reverse", "--format=%cI", "HEAD"], root).stdout.split("\n", 1)[0]
+    from . import agents
     return {"n_commits": int(n) if n.isdigit() else 0,
             "n_contributors": len({e.lower() for e in emails}),
-            "first_commit_date": first.strip() or None}
+            "first_commit_date": first.strip() or None,
+            **agents.counts(root)}
 
 
 def clone_flags(history: bool, as_of: str | None = None) -> list[str]:
